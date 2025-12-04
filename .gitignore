@@ -1,0 +1,29 @@
+# Cargo build files
+/target/
+
+# Rust/Cargo generated files
+**/*.rs.bk
+**/*.rlib
+
+# Cargo.lock for libraries: usually you **keep it for apps**, ignore for libraries
+# Uncomment if this is a library project
+# Cargo.lock
+
+# IDEs and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment files
+.env
+
+# Backup files
+*~
