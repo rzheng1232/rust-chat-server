@@ -57,6 +57,7 @@ async fn main() -> Result<(), sqlx::Error>{
         .route("/createchat", get(new_chat))
         .route("/newmessage/chatname/{chat}/username/{user}", post(incoming_message))
         .route("/getchat/chatname/{chat}", get(get_message_history))
+        .route("/checkuser/username/{name}", get(check_user_route))
         .with_state(pool.clone());
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:80").await.unwrap();
@@ -223,10 +224,27 @@ Query(params): Query<CreateChatParams>) -> Json<Result<(), ()>>{
     }
     return Json(Ok(()));
 }
+/// Checks for existing user:
+async fn check_user_exist(username: String, pool : SqlitePool)->Result<i64, sqlx::Error> {
+    let exists = sqlx::query_scalar!(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE username = ?) AS _exists",
+        username
+    )
+    .fetch_one(&pool)
+    .await?;
+    return Ok(exists); 
+}
+/// Routing function for checking for existing user
+async fn check_user_route(State(pool): State<SqlitePool>, Path(username):Path<String>)->Json<Result<String, String>>{
+    Json(Ok(check_user_exist(username.clone(), pool.clone()).await.unwrap().to_string()))
+}
 /// Creates new user; 
 /// # Query format:
 /// curl "http://98.93.98.244:80/createaccount/username/NameString/password/PasswordString"  
-async fn new_user(State(pool): State<SqlitePool>, Path((username, password)):Path<(String,String)>) -> Json<Result<(), ()>>{
+async fn new_user(State(pool): State<SqlitePool>, Path((username, password)):Path<(String,String)>) -> Json<Result<String, String>>{
+    if check_user_exist(username.clone(), pool.clone()).await.unwrap() == 1{
+        return Json(Err(String::from("0")));
+    }
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
     let password_hash = argon2.hash_password(password.as_bytes(), &salt).unwrap().to_string();
@@ -235,7 +253,7 @@ async fn new_user(State(pool): State<SqlitePool>, Path((username, password)):Pat
     r#"INSERT INTO users (username, password, role, created_at)
     VALUES (?, ?, ?, datetime('now'))"#, username, password_hash, role
     ).execute(&pool).await.unwrap();
-    Json(Ok(()))
+    return Json(Ok(String::from("1")));
 }
 /// Authenticates user login
 /// # Query format:
@@ -269,4 +287,3 @@ async fn login(State(pool): State<SqlitePool>, Path((username, password)): Path<
         return Json(Ok(String::from("0")));
     }
 }
-// Au
