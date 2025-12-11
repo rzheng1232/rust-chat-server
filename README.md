@@ -1,4 +1,4 @@
-**Rust Chat Server — Run Instructions
+**Rust Chat Server — Run Instructions**
 ```markdown
 ### 1. Clone the repository
 \`\`\`bash
