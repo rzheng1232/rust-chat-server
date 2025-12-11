@@ -21,7 +21,7 @@ CREATE TABLE chat_users (
     user_id INTEGER NOT NULL,
     is_active BOOLEAN DEFAULT 0,
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(chat_id) REFERENCES chats(id),
+    FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
     FOREIGN KEY(user_id) REFERENCES users(id)
 );
 
@@ -33,7 +33,7 @@ CREATE TABLE messages (
     content TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     status TEXT,
-    FOREIGN KEY(chat_id) REFERENCES chats(id),
+    FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE,
     FOREIGN KEY(user_id) REFERENCES users(id)
 );
 
@@ -54,5 +54,5 @@ CREATE TABLE chat_history_cache (
     chat_id INTEGER NOT NULL,
     message_history TEXT,                 -- SQLite supports JSON functions if stored as TEXT
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(chat_id) REFERENCES chats(id)
+    FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE
 );

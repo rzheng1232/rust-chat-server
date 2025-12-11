@@ -26,11 +26,6 @@ struct Message{
     content: String
 }
 #[derive(Deserialize, Serialize)]
-struct ChatInfo{
-    id: String,
-    users: Vec<String>,
-}
-#[derive(Deserialize, Serialize)]
 struct ChatHistoryMessage{
     username: String,
     content: String,
@@ -47,9 +42,6 @@ async fn main() -> Result<(), sqlx::Error>{
     const NUM_THREADS:i32 = 1;
     dotenv::dotenv().ok();
     let pool = SqlitePool::connect("sqlite:chat.db").await?;
-    sqlx::query("PRAGMA foreign_keys = ON;")
-    .execute(&pool)
-    .await?;
     let mut thread_handlers = Vec::new();
     for i in 0..NUM_THREADS{
         let thread_pool = pool.clone();
@@ -60,14 +52,12 @@ async fn main() -> Result<(), sqlx::Error>{
     
     let app = Router::new()
         .route("/", get(root))
-        .route("/Authenticate/username/{name}/password/{pass}", get(login))
-        .route("/createaccount/username/{name}/password/{pass}", get(new_user))
+        .route("/Authenticate/username/{name}/password/{pass}/public_ip/{ip}", get(login))
+        .route("/createaccount/username/{name}/password/{pass}/public", get(new_user))
         .route("/createchat", get(new_chat))
         .route("/newmessage/chatname/{chat}/username/{user}", post(incoming_message))
         .route("/getchat/chatname/{chat}", get(get_message_history))
         .route("/checkuser/username/{name}", get(check_user_route))
-        .route("/listchats/username/{name}", get(list_chats))
-        .route("/deletechat/username/{username}/chatname/{chatname}", get(delete_chat))
         .with_state(pool.clone());
     // run our app with hyper, listening globally on port 3000
     let listener = tokio::net::TcpListener::bind("0.0.0.0:80").await.unwrap();
@@ -93,7 +83,7 @@ async fn message_thread(pool:SqlitePool){
             .await
             .unwrap() {
             Some(msg) => msg,
-            None => {tokio::time::sleep(std::time::Duration::from_secs(1)).await; continue;},
+            None => {println!("No valid messages, trying agian in 5 seconds... ");tokio::time::sleep(std::time::Duration::from_secs(5)).await; continue;},
         };
         let message_stuff = query!(
             "SELECT content, chat_id, user_id FROM messages WHERE id = ?", curr_message.message_id).
@@ -197,7 +187,7 @@ async fn incoming_message(
 /// # Query format:
 /// curl "http://98.93.98.244:80/createchat?name=ChatName&user=username1&user=username2&user=username3..."
 async fn new_chat(State(pool): State<SqlitePool>,
-Query(params): Query<CreateChatParams>) -> Json<Result<String, String>>{
+Query(params): Query<CreateChatParams>) -> Json<Result<(), ()>>{
     let chat_name = &params.name;
     let users = &params.user;
     for user in users{
@@ -212,6 +202,13 @@ Query(params): Query<CreateChatParams>) -> Json<Result<String, String>>{
         .await
         .unwrap().id;
     let chat_history: Vec<ChatHistoryMessage> = Vec::new();
+    // vec![
+    //     ChatHistoryMessage{
+    //         username: "Hello World!".to_string(),
+    //         content: "Welcome!".to_string(),
+    //         created_at: "0000-00-00 00:00:00".to_string(),
+    //     }
+    // ];
     let json_history = serde_json::to_string(&chat_history).unwrap();
     query!(
         r#"INSERT INTO chat_history_cache (chat_id, message_history, updated_at)
@@ -226,7 +223,7 @@ Query(params): Query<CreateChatParams>) -> Json<Result<String, String>>{
             VALUES (?, ?, 1, datetime('now'))"#, chat_id, user_id
             ).execute(&pool).await.unwrap();
     }
-    return Json(Ok(String::from("1")));
+    return Json(Ok(()));
 }
 /// Checks for existing user:
 async fn check_user_exist(username: String, pool : SqlitePool)->Result<i64, sqlx::Error> {
@@ -234,12 +231,14 @@ async fn check_user_exist(username: String, pool : SqlitePool)->Result<i64, sqlx
         "SELECT EXISTS(SELECT 1 FROM users WHERE username = ?) AS _exists",
         username
     )
+    
     .fetch_one(&pool)
     .await?;
     return Ok(exists); 
 }
 /// Routing function for checking for existing user
 async fn check_user_route(State(pool): State<SqlitePool>, Path(username):Path<String>)->Json<Result<String, String>>{
+    println!("Checking user {}", username);
     Json(Ok(check_user_exist(username.clone(), pool.clone()).await.unwrap().to_string()))
 }
 /// Creates new user; 
@@ -247,9 +246,8 @@ async fn check_user_route(State(pool): State<SqlitePool>, Path(username):Path<St
 /// curl "http://98.93.98.244:80/createaccount/username/NameString/password/PasswordString"  
 async fn new_user(State(pool): State<SqlitePool>, Path((username, password)):Path<(String,String)>) -> Json<Result<String, String>>{
     if check_user_exist(username.clone(), pool.clone()).await.unwrap() == 1{
-        return Json(Ok(String::from("0")));
+        return Json(Err(String::from("0")));
     }
-    println!("Create new user {}", username);
     let salt = SaltString::generate(&mut OsRng);
     let argon2 = Argon2::default();
     let password_hash = argon2.hash_password(password.as_bytes(), &salt).unwrap().to_string();
@@ -269,7 +267,6 @@ async fn login(State(pool): State<SqlitePool>, Path((username, password)): Path<
         username
     ).fetch_optional(&pool) // returns Option
     .await.unwrap(); 
-    println!("Login user {}", username);
     if let Some(row) = row.as_ref() {
         match PasswordHash::new(&row.password) {
             Ok(parsed_hash) => {
@@ -290,73 +287,6 @@ async fn login(State(pool): State<SqlitePool>, Path((username, password)): Path<
         }
     } else {
         println!("Username not found");
-        return Json(Ok(String::from("0".to_string())));
+        return Json(Ok(String::from("0")));
     }
-}
-///http://44.192.82.24/listchats?user=${currentUser}
-async fn list_chats(State(pool): State<SqlitePool>, Path(username):Path<String>) ->Json<Result<Vec<ChatInfo>, String>>{
-    let user_id = query!("SELECT id FROM users WHERE username = ?", username)
-            .fetch_one(&pool)
-            .await.unwrap().id;     
-
-    let chat_rows = sqlx::query!(
-        "SELECT chat_id FROM chat_users WHERE user_id = ?",
-        user_id
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-    
-    let chat_ids: Vec<i64> = chat_rows.into_iter().map(|row| row.chat_id).collect();
-    let mut chats_infos: Vec<ChatInfo> = Vec::new();
-    for id in chat_ids{
-        let chat_name = query!("SELECT name FROM chats WHERE id = ?", id)
-            .fetch_one(&pool)
-            .await.unwrap().name;   
-        let attached_users = sqlx::query!(
-            "SELECT user_id FROM chat_users WHERE chat_id = ?",
-            id
-        ).fetch_all(&pool)   // fetch all matching rows
-        .await
-        .unwrap();
-        let user_ids_to_iter: Vec<i64> = attached_users.into_iter().map(|row| row.user_id).collect();
-        let mut users: Vec<String> = Vec::new();
-        for user_i in user_ids_to_iter{
-            let t = query!("SELECT username FROM users WHERE id = ?", user_i)
-            .fetch_one(&pool)
-            .await.unwrap().username;   
-            users.push(t)
-        }
-        let chat_info_struct = ChatInfo{id: chat_name.unwrap(), users: users};
-        chats_infos.push(chat_info_struct);
-        
-    }
-    Json(Ok(chats_infos))
-
-}
-#[axum::debug_handler]
-async fn delete_chat(State(pool): State<SqlitePool>, Path((username, chatname)): Path<(String, String)>) -> Json<Result<String, String>>{
-    println!("deleting {}", chatname);
-    let user_id = query!("SELECT id FROM users WHERE username = ?", username)
-            .fetch_one(&pool)
-            .await.unwrap().id; 
-    let chat_id = query!("SELECT id FROM chats WHERE name = ?", chatname)
-            .fetch_one(&pool)
-            .await.unwrap().id; 
-    let exists = sqlx::query_scalar!(
-        "SELECT EXISTS(SELECT 1 FROM chat_users WHERE user_id = ? AND chat_id = ?) AS _exists",
-        user_id, chat_id).fetch_one(&pool).await.unwrap() ;
-    
-    if exists == 1{
-        println!("deleting");
-        query!("DELETE FROM message_queue WHERE message_id IN (SELECT id FROM messages WHERE chat_id = ?)", chat_id)
-        .execute(&pool)
-        .await.unwrap();
-        query!("DELETE FROM chats WHERE id = ?", chat_id)
-        .execute(&pool)
-        .await
-        .unwrap();
-    }
-    println!("{}", exists);
-    return Json(Ok(exists.to_string())); 
 }
