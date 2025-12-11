@@ -1,5 +1,6 @@
+```markdown
 
-## 🚀 Rust Chat Server — Run Instructions
+## Rust Chat Server — Run Instructions
 
 ### 1. Clone the repository
 \`\`\`bash
